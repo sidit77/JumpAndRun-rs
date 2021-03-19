@@ -82,7 +82,7 @@ macro_rules! include_spirv_out {
 
 pub trait Game: 'static + Sized {
     fn init(display: &Display) -> Result<Self, Error>;
-    fn resize(&mut self, display: &Display);
+    fn resize(&mut self, display: &Display, width: u32, height: u32);
     fn update(&mut self, display: &Display, dt: Duration);
     fn render(&mut self, display: &mut Display, encoder: &mut wgpu::CommandEncoder, frame: &wgpu::TextureView, ui: Option<&imgui::Ui>);
 }
@@ -177,11 +177,11 @@ pub async fn run<G: Game>() -> Result<(), Error> {
                         WindowEvent::Focused(f) => is_focused = f,
                         WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
                             display.resize(new_inner_size.width, new_inner_size.height);
-                            game.resize(&mut display);
+                            game.resize(&mut display, new_inner_size.width, new_inner_size.height);
                         }
                         WindowEvent::Resized(new_inner_size) => {
                             display.resize(new_inner_size.width, new_inner_size.height);
-                            game.resize(&mut display);
+                            game.resize(&mut display, new_inner_size.width, new_inner_size.height);
                         }
                         _ => {}
                     }

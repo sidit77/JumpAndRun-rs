@@ -57,30 +57,17 @@ const VERTICES: &[Vertex] = &[
 
 const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
 
-struct State {
+struct RenderSetup {
     surface: wgpu::Surface,
     device: wgpu::Device,
     queue: wgpu::Queue,
     sc_desc: wgpu::SwapChainDescriptor,
     swap_chain: wgpu::SwapChain,
     size: winit::dpi::PhysicalSize<u32>,
-    render_pipeline: wgpu::RenderPipeline,
-    // NEW!
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    num_indices: u32,
+
 }
 
-#[macro_export]
-macro_rules! include_spirv_out {
-    ($file:expr) => {
-        {
-            wgpu::include_spirv!(concat!(env!("OUT_DIR"), "/", file!() , "/../", $file))
-        }
-    };
-}
-
-impl State {
+impl RenderSetup {
     async fn new(window: &Window) -> Self {
 
         let size = window.inner_size();
@@ -118,17 +105,55 @@ impl State {
         };
         let swap_chain = device.create_swap_chain(&surface, &sc_desc);
 
-        let vs_module = device.create_shader_module(&include_spirv_out!("shader.vert.spv"));
-        let fs_module = device.create_shader_module(&include_spirv_out!("shader.frag.spv"));
+        Self {
+            surface,
+            device,
+            queue,
+            sc_desc,
+            swap_chain,
+            size,
+        }
+    }
+
+    fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+        self.size = new_size;
+        self.sc_desc.width = new_size.width;
+        self.sc_desc.height = new_size.height;
+        self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
+    }
+}
+
+struct State {
+    render_pipeline: wgpu::RenderPipeline,
+    // NEW!
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    num_indices: u32,
+}
+
+#[macro_export]
+macro_rules! include_spirv_out {
+    ($file:expr) => {
+        {
+            wgpu::include_spirv!(concat!(env!("OUT_DIR"), "/", file!() , "/../", $file))
+        }
+    };
+}
+
+impl State {
+    async fn new(setup: &RenderSetup) -> Self {
+
+        let vs_module = setup.device.create_shader_module(&include_spirv_out!("shader.vert.spv"));
+        let fs_module = setup.device.create_shader_module(&include_spirv_out!("shader.frag.spv"));
 
         let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            setup.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[],
                 push_constant_ranges: &[],
             });
 
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let render_pipeline = setup.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
@@ -140,7 +165,7 @@ impl State {
                 module: &fs_module,
                 entry_point: "main",
                 targets: &[wgpu::ColorTargetState {
-                    format: sc_desc.format,
+                    format: setup.sc_desc.format,
                     alpha_blend: wgpu::BlendState::REPLACE,
                     color_blend: wgpu::BlendState::REPLACE,
                     write_mask: wgpu::ColorWrite::ALL,
@@ -162,13 +187,13 @@ impl State {
             },
         });
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let vertex_buffer = setup.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
             contents: bytemuck::cast_slice(VERTICES),
             usage: wgpu::BufferUsage::VERTEX,
         });
 
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let index_buffer = setup.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
             contents: bytemuck::cast_slice(INDICES),
             usage: wgpu::BufferUsage::INDEX,
@@ -176,24 +201,11 @@ impl State {
         let num_indices = INDICES.len() as u32;
 
         Self {
-            surface,
-            device,
-            queue,
-            sc_desc,
-            swap_chain,
-            size,
             render_pipeline,
             vertex_buffer,
             index_buffer,
             num_indices,
         }
-    }
-
-    fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        self.size = new_size;
-        self.sc_desc.width = new_size.width;
-        self.sc_desc.height = new_size.height;
-        self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
     }
 
     #[allow(unused_variables)]
@@ -203,10 +215,10 @@ impl State {
 
     fn update(&mut self) {}
 
-    fn render(&mut self) -> Result<(), wgpu::SwapChainError> {
-        let frame = self.swap_chain.get_current_frame()?.output;
+    fn render(&mut self, setup: &RenderSetup) -> Result<(), wgpu::SwapChainError> {
+        let frame = setup.swap_chain.get_current_frame()?.output;
 
-        let mut encoder = self
+        let mut encoder = setup
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
@@ -237,7 +249,7 @@ impl State {
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
         }
 
-        self.queue.submit(iter::once(encoder.finish()));
+        setup.queue.submit(iter::once(encoder.finish()));
 
         Ok(())
     }
@@ -251,7 +263,8 @@ fn main() {
     use futures::executor::block_on;
 
     // Since main can't be async, we're going to need to block
-    let mut state = block_on(State::new(&window));
+    let mut setup = block_on(RenderSetup::new(&window));
+    let mut state = block_on(State::new(&setup));
 
     event_loop.run(move |event, _, control_flow| {
         match event {
@@ -271,11 +284,11 @@ fn main() {
                             _ => {}
                         },
                         WindowEvent::Resized(physical_size) => {
-                            state.resize(*physical_size);
+                            setup.resize(*physical_size);
                         }
                         WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
                             // new_inner_size is &mut so w have to dereference it twice
-                            state.resize(**new_inner_size);
+                            setup.resize(**new_inner_size);
                         }
                         _ => {}
                     }
@@ -283,10 +296,10 @@ fn main() {
             }
             Event::RedrawRequested(_) => {
                 state.update();
-                match state.render() {
+                match state.render(&setup) {
                     Ok(_) => {}
                     // Recreate the swap_chain if lost
-                    Err(wgpu::SwapChainError::Lost) => state.resize(state.size),
+                    Err(wgpu::SwapChainError::Lost) => setup.resize(setup.size),
                     // The system is out of memory, we should probably quit
                     Err(wgpu::SwapChainError::OutOfMemory) => *control_flow = ControlFlow::Exit,
                     // All other errors (Outdated, Timeout) should be resolved by the next frame

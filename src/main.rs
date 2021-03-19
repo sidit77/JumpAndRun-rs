@@ -5,6 +5,7 @@ use imgui::Condition;
 use imgui::im_str;
 use glam::*;
 use crate::framework::{run, Display, Game};
+use wgpu::{BlendFactor, BlendOperation};
 
 mod framework;
 
@@ -236,8 +237,16 @@ impl Game for JumpAndRun {
                 entry_point: "main",
                 targets: &[wgpu::ColorTargetState {
                     format: display.sc_desc.format,
-                    alpha_blend: wgpu::BlendState::REPLACE,
-                    color_blend: wgpu::BlendState::REPLACE,
+                    color_blend: wgpu::BlendState {
+                        src_factor: BlendFactor::SrcAlpha,
+                        dst_factor: BlendFactor::OneMinusSrcAlpha,
+                        operation: BlendOperation::Add,
+                    },
+                    alpha_blend: wgpu::BlendState {
+                        src_factor: BlendFactor::One,
+                        dst_factor: BlendFactor::One,
+                        operation: BlendOperation::Add,
+                    },
                     write_mask: wgpu::ColorWrite::ALL,
                 }],
             }),

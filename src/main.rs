@@ -93,14 +93,13 @@ struct JumpAndRun {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     num_indices: u32,
-    imgui: imgui::Context,
-    platform: imgui_winit_support::WinitPlatform,
-    renderer: Renderer
 }
 
 impl Game for JumpAndRun {
 
     fn init(display: &Display) -> Result<Self, Error> {
+        display.window.set_title("Jump and Run");
+
         let vs_module = display.device.create_shader_module(&include_spirv_out!("shader.vert.spv"));
         let fs_module = display.device.create_shader_module(&include_spirv_out!("shader.frag.spv"));
 
@@ -175,41 +174,11 @@ impl Game for JumpAndRun {
         let num_indices = indices.len() as u32;
 
 
-        let mut imgui = imgui::Context::create();
-        let mut platform = imgui_winit_support::WinitPlatform::init(&mut imgui);
-        platform.attach_window(
-            imgui.io_mut(),
-            &display.window,
-            imgui_winit_support::HiDpiMode::Default,
-        );
-        imgui.set_ini_filename(None);
-
-        let hidpi_factor = display.window.scale_factor();
-        let font_size = (13.0 * hidpi_factor) as f32;
-        imgui.io_mut().font_global_scale = (1.0 / hidpi_factor) as f32;
-        imgui.fonts().add_font(&[FontSource::DefaultFontData {
-            config: Some(imgui::FontConfig {
-                oversample_h: 1,
-                pixel_snap_h: true,
-                size_pixels: font_size,
-                ..Default::default()
-            }),
-        }]);
-
-        let renderer_config = RendererConfig {
-            texture_format: display.sc_desc.format,
-            ..Default::default()
-        };
-        let renderer = Renderer::new(&mut imgui, &display.device, &display.queue, renderer_config);
-
         Ok(Self {
             render_pipeline,
             vertex_buffer,
             index_buffer,
             num_indices,
-            imgui,
-            platform,
-            renderer
         })
     }
 
@@ -220,15 +189,13 @@ impl Game for JumpAndRun {
 
     #[allow(unused_variables)]
     fn update(&mut self, display: &Display, dt: Duration) {
-        self.imgui.io_mut().update_delta_time(dt);
+
     }
 
-    fn render(&mut self, display: &mut Display) {
-        self.platform
-            .prepare_frame(self.imgui.io_mut(), &display.window)
-            .expect("Failed to prepare frame!");
-        let ui = self.imgui.frame();
-        {
+    #[allow(unused_variables)]
+    fn render(&mut self, display: &mut Display, encoder: &mut wgpu::CommandEncoder, frame: &wgpu::TextureView, ui: Option<&imgui::Ui>) {
+
+        if let Some(ui) = ui {
             let window = imgui::Window::new(im_str!("Hello Imgui from WGPU!"));
             window
                 .size([300.0, 100.0], Condition::FirstUseEver)
@@ -248,68 +215,32 @@ impl Game for JumpAndRun {
                     ));
                 });
         }
-        //let frame = display.swap_chain.get_current_frame()?.output;
-        let frame = display.swap_chain.get_current_frame().unwrap().output;
-
-        let mut encoder = display
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder"),
-            });
-
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: &frame.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
-                            a: 1.0,
-                        }),
-                        store: true,
-                    },
-                }],
-                depth_stencil_attachment: None,
-            });
-
-            render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
-        }
-        {
-            self.platform.prepare_render(&ui, &display.window);
-
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("UI RenderPass"),
-                color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: &frame.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: true,
-                    },
-                }],
-                depth_stencil_attachment: None,
-            });
-            self.renderer
-                .render(ui.render(), &display.queue, &display.device, &mut pass)
-                .expect("Failed to render UI!");
-        }
 
 
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Render Pass"),
+            color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                attachment: frame,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.1,
+                        g: 0.2,
+                        b: 0.3,
+                        a: 1.0,
+                    }),
+                    store: true,
+                },
+            }],
+            depth_stencil_attachment: None,
+        });
 
-        display.queue.submit(Some(encoder.finish()));
+        render_pass.set_pipeline(&self.render_pipeline);
+        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
 
         //Ok(())
-    }
-
-    fn handle_event(&mut self, display: &Display, event: &Event<()>) {
-        self.platform.handle_event(self.imgui.io_mut(), &display.window, event);
     }
 }
 
@@ -317,9 +248,7 @@ pub trait Game: 'static + Sized {
     fn init(display: &Display) -> Result<Self, Error>;
     fn resize(&mut self, display: &Display);
     fn update(&mut self, display: &Display, dt: Duration);
-    fn render(&mut self, display: &mut Display);
-    #[allow(unused_variables)]
-    fn handle_event(&mut self, display: &Display, event: &Event<()>) {}
+    fn render(&mut self, display: &mut Display, encoder: &mut wgpu::CommandEncoder, frame: &wgpu::TextureView, ui: Option<&imgui::Ui>);
 }
 
 pub async fn run<G: Game>() -> Result<(), Error> {
@@ -332,19 +261,47 @@ pub async fn run<G: Game>() -> Result<(), Error> {
         .build(&event_loop)?;
     let mut display = Display::new(window).await?;
     let mut game = G::init(&mut display)?;
+
+    let mut imgui = imgui::Context::create();
+    let mut platform = imgui_winit_support::WinitPlatform::init(&mut imgui);
+    platform.attach_window(
+        imgui.io_mut(),
+        &display.window,
+        imgui_winit_support::HiDpiMode::Default,
+    );
+    imgui.set_ini_filename(None);
+
+    let hidpi_factor = display.window.scale_factor();
+    let font_size = (13.0 * hidpi_factor) as f32;
+    imgui.io_mut().font_global_scale = (1.0 / hidpi_factor) as f32;
+    imgui.fonts().add_font(&[FontSource::DefaultFontData {
+        config: Some(imgui::FontConfig {
+            oversample_h: 1,
+            pixel_snap_h: true,
+            size_pixels: font_size,
+            ..Default::default()
+        }),
+    }]);
+
+    let renderer_config = RendererConfig {
+        texture_format: display.sc_desc.format,
+        ..Default::default()
+    };
+    let mut renderer = Renderer::new(&mut imgui, &display.device, &display.queue, renderer_config);
+
     let mut last_update = Instant::now();
     let mut is_resumed = true;
     let mut is_focused = true;
     let mut is_redraw_requested = true;
 
     event_loop.run(move |event, _, control_flow| {
-        game.handle_event(&mut display, &event);
         *control_flow = if is_resumed && is_focused {
             ControlFlow::Poll
         } else {
             ControlFlow::Wait
         };
 
+        platform.handle_event(imgui.io_mut(), &display.window, &event);
         match event {
             Event::Resumed => is_resumed = true,
             Event::Suspended => is_resumed = false,
@@ -354,8 +311,46 @@ pub async fn run<G: Game>() -> Result<(), Error> {
                     let dt = now - last_update;
                     last_update = now;
 
+                    imgui.io_mut().update_delta_time(dt);
                     game.update(&mut display, dt);
-                    game.render(&mut display);
+
+                    platform
+                        .prepare_frame(imgui.io_mut(), &display.window)
+                        .expect("Failed to prepare frame!");
+
+                    let frame = display.swap_chain.get_current_frame().unwrap().output;
+
+                    let mut encoder = display
+                        .device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("Render Encoder"),
+                        });
+
+                    let ui = imgui.frame();
+                    game.render(&mut display, &mut encoder, &frame.view, Some(&ui));
+
+                    {
+                        platform.prepare_render(&ui, &display.window);
+
+                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("UI RenderPass"),
+                            color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                                attachment: &frame.view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Load,
+                                    store: true,
+                                },
+                            }],
+                            depth_stencil_attachment: None,
+                        });
+                        renderer
+                            .render(ui.render(), &display.queue, &display.device, &mut pass)
+                            .expect("Failed to render UI!");
+                    }
+
+                    display.queue.submit(Some(encoder.finish()));
+
                     is_redraw_requested = false;
                 }
             }
@@ -394,66 +389,6 @@ pub async fn run<G: Game>() -> Result<(), Error> {
 }
 
 fn main() -> Result<()> {
-    /*
-    env_logger::init();
-    let event_loop = EventLoop::new();
-    let window = WindowBuilder::new().build(&event_loop).unwrap();
-
-    use futures::executor::block_on;
-
-    // Since main can't be async, we're going to need to block
-    let mut display = block_on(Display::new(window));
-    let mut state = block_on(State::new(&display.device, display.sc_desc.format));
-
-    event_loop.run(move |event, _, control_flow| {
-        match event {
-            Event::WindowEvent {
-                ref event,
-                window_id,
-            } if window_id == window.id() => {
-                if !state.input(event) {
-                    match event {
-                        WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-                        WindowEvent::KeyboardInput { input, .. } => match input {
-                            KeyboardInput {
-                                state: ElementState::Pressed,
-                                virtual_keycode: Some(VirtualKeyCode::Escape),
-                                ..
-                            } => *control_flow = ControlFlow::Exit,
-                            _ => {}
-                        },
-                        WindowEvent::Resized(physical_size) => {
-                            display.resize(*physical_size);
-                        }
-                        WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                            // new_inner_size is &mut so w have to dereference it twice
-                            display.resize(**new_inner_size);
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Event::RedrawRequested(_) => {
-                state.update();
-                match state.render(&display) {
-                    Ok(_) => {}
-                    // Recreate the swap_chain if lost
-                    Err(wgpu::SwapChainError::Lost) => display.resize(display.size),
-                    // The system is out of memory, we should probably quit
-                    Err(wgpu::SwapChainError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-                    // All other errors (Outdated, Timeout) should be resolved by the next frame
-                    Err(e) => eprintln!("{:?}", e),
-                }
-            }
-            Event::MainEventsCleared => {
-                // RedrawRequested will only trigger once, unless we manually
-                // request it.
-                window.request_redraw();
-            }
-            _ => {}
-        }
-    });
-    */
     use futures::executor::block_on;
 
     block_on(run::<JumpAndRun>())?;

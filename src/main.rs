@@ -45,7 +45,7 @@ impl Camera {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
-    position: glam::Vec3,
+    position: glam::Vec2,
     color: glam::Vec3,
 }
 
@@ -123,7 +123,7 @@ impl Game for JumpAndRun {
                     wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
                         step_mode: wgpu::InputStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float3],
+                        attributes: &wgpu::vertex_attr_array![0 => Float2, 1 => Float3],
                     }
                 ],
             },
@@ -154,11 +154,11 @@ impl Game for JumpAndRun {
         });
 
         let vertices : Vec<Vertex> = vec![
-            Vertex { position: glam::vec3(-0.08682410,  0.49240386, 0.0), color: glam::vec3(0.5, 0.0, 0.5) }, // A
-            Vertex { position: glam::vec3(-0.49513406,  0.06958647, 0.0), color: glam::vec3(0.5, 0.0, 0.5) }, // B
-            Vertex { position: glam::vec3(-0.21918549, -0.44939706, 0.0), color: glam::vec3(0.5, 0.0, 0.5) }, // C
-            Vertex { position: glam::vec3( 0.35966998, -0.34732910, 0.0), color: glam::vec3(0.5, 0.0, 0.5) }, // D
-            Vertex { position: glam::vec3( 0.44147372,  0.23473590, 0.0), color: glam::vec3(0.5, 0.0, 0.5) }, // E
+            Vertex { position: glam::vec2(-0.08682410,  0.49240386), color: glam::vec3(0.5, 0.0, 0.5) }, // A
+            Vertex { position: glam::vec2(-0.49513406,  0.06958647), color: glam::vec3(0.5, 0.2, 0.5) }, // B
+            Vertex { position: glam::vec2(-0.21918549, -0.44939706), color: glam::vec3(0.5, 0.4, 0.5) }, // C
+            Vertex { position: glam::vec2( 0.35966998, -0.34732910), color: glam::vec3(0.5, 0.6, 0.5) }, // D
+            Vertex { position: glam::vec2( 0.44147372,  0.23473590), color: glam::vec3(0.5, 0.8, 0.5) }, // E
         ];
 
         let vertex_buffer = display.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

@@ -141,19 +141,19 @@ macro_rules! include_spirv_out {
 }
 
 impl State {
-    async fn new(setup: &RenderSetup) -> Self {
+    async fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
 
-        let vs_module = setup.device.create_shader_module(&include_spirv_out!("shader.vert.spv"));
-        let fs_module = setup.device.create_shader_module(&include_spirv_out!("shader.frag.spv"));
+        let vs_module = device.create_shader_module(&include_spirv_out!("shader.vert.spv"));
+        let fs_module = device.create_shader_module(&include_spirv_out!("shader.frag.spv"));
 
         let render_pipeline_layout =
-            setup.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[],
                 push_constant_ranges: &[],
             });
 
-        let render_pipeline = setup.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
@@ -165,7 +165,7 @@ impl State {
                 module: &fs_module,
                 entry_point: "main",
                 targets: &[wgpu::ColorTargetState {
-                    format: setup.sc_desc.format,
+                    format,
                     alpha_blend: wgpu::BlendState::REPLACE,
                     color_blend: wgpu::BlendState::REPLACE,
                     write_mask: wgpu::ColorWrite::ALL,
@@ -187,13 +187,13 @@ impl State {
             },
         });
 
-        let vertex_buffer = setup.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
             contents: bytemuck::cast_slice(VERTICES),
             usage: wgpu::BufferUsage::VERTEX,
         });
 
-        let index_buffer = setup.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
             contents: bytemuck::cast_slice(INDICES),
             usage: wgpu::BufferUsage::INDEX,
@@ -264,7 +264,7 @@ fn main() {
 
     // Since main can't be async, we're going to need to block
     let mut setup = block_on(RenderSetup::new(&window));
-    let mut state = block_on(State::new(&setup));
+    let mut state = block_on(State::new(&setup.device, setup.sc_desc.format));
 
     event_loop.run(move |event, _, control_flow| {
         match event {

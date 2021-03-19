@@ -106,9 +106,7 @@ impl Game for JumpAndRun {
             ],
             label: Some("Uniform Bind Group"),
         });
-
-        let diffuse_bytes = include_bytes!("happy-tree.png");
-        let diffuse_image = image::load_from_memory(diffuse_bytes).unwrap();
+        let diffuse_image = image::open("./assets/textures/tilesheet_complete.png").unwrap();
         let diffuse_rgba = diffuse_image.as_rgba8().unwrap();
 
         use image::GenericImageView;
@@ -158,7 +156,7 @@ impl Game for JumpAndRun {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
+            mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
@@ -260,11 +258,10 @@ impl Game for JumpAndRun {
         });
 
         let vertices : Vec<Vertex> = vec![
-            Vertex { position: glam::vec2(-0.08682410,  0.49240386), tex_coords: glam::vec2(0.4131759000, 0.992403860) }, // A
-            Vertex { position: glam::vec2(-0.49513406,  0.06958647), tex_coords: glam::vec2(0.0048659444, 0.569586460) }, // B
-            Vertex { position: glam::vec2(-0.21918549, -0.44939706), tex_coords: glam::vec2(0.2808145300, 0.050602943) }, // C
-            Vertex { position: glam::vec2( 0.35966998, -0.34732910), tex_coords: glam::vec2(0.8596700000, 0.152670890) }, // D
-            Vertex { position: glam::vec2( 0.44147372,  0.23473590), tex_coords: glam::vec2(0.9414737000, 0.734735900) }, // E
+            Vertex { position: glam::vec2(0.0, 0.0), tex_coords: glam::vec2(2.0 / 22.0, 1.0 / 12.0) }, // A
+            Vertex { position: glam::vec2(1.0, 0.0), tex_coords: glam::vec2(1.0 / 22.0, 1.0 / 12.0) }, // B
+            Vertex { position: glam::vec2(1.0, 1.0), tex_coords: glam::vec2(1.0 / 22.0, 0.0 / 12.0) }, // C
+            Vertex { position: glam::vec2(0.0, 1.0), tex_coords: glam::vec2(2.0 / 22.0, 0.0 / 12.0) }, // D
         ];
 
         let vertex_buffer = display.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -273,7 +270,7 @@ impl Game for JumpAndRun {
             usage: wgpu::BufferUsage::VERTEX,
         });
 
-        let indices : Vec<u16> = vec![0, 1, 4, 1, 2, 4, 2, 3, 4];
+        let indices : Vec<u16> = vec![0, 1, 2, 0, 2, 3];
 
         let index_buffer = display.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),

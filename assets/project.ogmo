@@ -14,7 +14,7 @@
   "defaultExportMode": ".json",
   "compactExport": false,
   "externalScript": "",
-  "playCommand": "",
+  "playCommand": "cd .. & cargo run",
   "entityTags": [],
   "layers": [
     {

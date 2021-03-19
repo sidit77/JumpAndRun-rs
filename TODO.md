@@ -1,4 +1,5 @@
 # TODO
 
 - [ ] Builder struct for `Camera`?
-- [ ] Improce FPS counter
+- [ ] Improve FPS counter
+- [ ] Investigate error on fullscreen switch

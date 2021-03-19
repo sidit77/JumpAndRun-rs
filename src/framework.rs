@@ -1,4 +1,4 @@
-use winit::window::{WindowBuilder, Window};
+use winit::window::{WindowBuilder, Window, Fullscreen};
 use winit::event::*;
 use winit::event_loop::{ControlFlow, EventLoop};
 use std::time::{Duration, Instant};
@@ -185,6 +185,33 @@ pub async fn run<G: Game>() -> Result<(), Error> {
                         }
                         _ => {}
                     }
+                }
+            }
+            Event::DeviceEvent {
+                event, ..
+            } => {
+                match event {
+                    DeviceEvent::Key(key) => {
+                        if is_focused {
+                            match key {
+                                KeyboardInput {
+                                    state: ElementState::Pressed,
+                                    virtual_keycode: Some(VirtualKeyCode::Escape),
+                                    ..
+                                } => *control_flow = ControlFlow::Exit,
+                                KeyboardInput {
+                                    state: ElementState::Pressed,
+                                    virtual_keycode: Some(VirtualKeyCode::F11),
+                                    ..
+                                } => match display.window.fullscreen() {
+                                    None => display.window.set_fullscreen(Some(Fullscreen::Borderless(display.window.current_monitor()))),
+                                    Some(_) => display.window.set_fullscreen(None)
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
             _ => {}

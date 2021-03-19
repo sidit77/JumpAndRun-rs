@@ -1,28 +1,29 @@
 use winit::window::{WindowBuilder, Window};
-use winit::event::{WindowEvent, Event, KeyboardInput, ElementState, VirtualKeyCode};
+use winit::event::*;
 use winit::event_loop::{ControlFlow, EventLoop};
 use wgpu::util::DeviceExt;
 use std::iter;
+use std::time::{Duration, Instant};
+use anyhow::*;
 
-struct RenderSetup {
+pub struct Display {
+    pub window: Window,
     surface: wgpu::Surface,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    sc_desc: wgpu::SwapChainDescriptor,
-    swap_chain: wgpu::SwapChain,
-    size: winit::dpi::PhysicalSize<u32>,
-
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub sc_desc: wgpu::SwapChainDescriptor,
+    pub swap_chain: wgpu::SwapChain,
 }
 
-impl RenderSetup {
-    async fn new(window: &Window) -> Self {
+impl Display {
+    async fn new(window: Window) -> Result<Self, Error> {
 
         let size = window.inner_size();
 
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
         let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
-        let surface = unsafe { instance.create_surface(window) };
+        let surface = unsafe { instance.create_surface(&window) };
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
@@ -52,30 +53,21 @@ impl RenderSetup {
         };
         let swap_chain = device.create_swap_chain(&surface, &sc_desc);
 
-        Self {
+        Ok(Self {
+            window,
             surface,
             device,
             queue,
             sc_desc,
             swap_chain,
-            size,
-        }
+        })
     }
 
-    fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        self.size = new_size;
-        self.sc_desc.width = new_size.width;
-        self.sc_desc.height = new_size.height;
+    fn resize(&mut self, width: u32, height: u32) {
+        self.sc_desc.width = width;
+        self.sc_desc.height = height;
         self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
     }
-}
-
-struct State {
-    render_pipeline: wgpu::RenderPipeline,
-    // NEW!
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    num_indices: u32,
 }
 
 #[macro_export]
@@ -94,20 +86,27 @@ struct Vertex {
     color: glam::Vec3,
 }
 
-impl State {
-    async fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+struct JumpAndRun {
+    render_pipeline: wgpu::RenderPipeline,
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    num_indices: u32,
+}
 
-        let vs_module = device.create_shader_module(&include_spirv_out!("shader.vert.spv"));
-        let fs_module = device.create_shader_module(&include_spirv_out!("shader.frag.spv"));
+impl Game for JumpAndRun {
+
+    fn init(display: &Display) -> Result<Self, Error> {
+        let vs_module = display.device.create_shader_module(&include_spirv_out!("shader.vert.spv"));
+        let fs_module = display.device.create_shader_module(&include_spirv_out!("shader.frag.spv"));
 
         let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            display.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[],
                 push_constant_ranges: &[],
             });
 
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let render_pipeline = display.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
@@ -125,7 +124,7 @@ impl State {
                 module: &fs_module,
                 entry_point: "main",
                 targets: &[wgpu::ColorTargetState {
-                    format,
+                    format: display.sc_desc.format,
                     alpha_blend: wgpu::BlendState::REPLACE,
                     color_blend: wgpu::BlendState::REPLACE,
                     write_mask: wgpu::ColorWrite::ALL,
@@ -155,7 +154,7 @@ impl State {
             Vertex { position: glam::vec3( 0.44147372,  0.23473590, 0.0), color: glam::vec3(0.5, 0.0, 0.5) }, // E
         ];
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let vertex_buffer = display.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
             contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsage::VERTEX,
@@ -163,32 +162,36 @@ impl State {
 
         let indices : Vec<u16> = vec![0, 1, 4, 1, 2, 4, 2, 3, 4];
 
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let index_buffer = display.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
             contents: bytemuck::cast_slice(&indices),
             usage: wgpu::BufferUsage::INDEX,
         });
         let num_indices = indices.len() as u32;
 
-        Self {
+        Ok(Self {
             render_pipeline,
             vertex_buffer,
             index_buffer,
             num_indices,
-        }
+        })
     }
 
     #[allow(unused_variables)]
-    fn input(&mut self, event: &WindowEvent) -> bool {
-        false
+    fn resize(&mut self, display: &Display) {
+        //unimplemented!()
     }
 
-    fn update(&mut self) {}
+    #[allow(unused_variables)]
+    fn update(&mut self, display: &Display, dt: Duration) {
+        //unimplemented!()
+    }
 
-    fn render(&mut self, setup: &RenderSetup) -> Result<(), wgpu::SwapChainError> {
-        let frame = setup.swap_chain.get_current_frame()?.output;
+    fn render(&mut self, display: &mut Display) {
+        //let frame = display.swap_chain.get_current_frame()?.output;
+        let frame = display.swap_chain.get_current_frame().unwrap().output;
 
-        let mut encoder = setup
+        let mut encoder = display
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
@@ -219,13 +222,90 @@ impl State {
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
         }
 
-        setup.queue.submit(iter::once(encoder.finish()));
+        display.queue.submit(iter::once(encoder.finish()));
 
-        Ok(())
+        //Ok(())
     }
 }
 
-fn main() {
+pub trait Game: 'static + Sized {
+    fn init(display: &Display) -> Result<Self, Error>;
+    fn resize(&mut self, display: &Display);
+    fn update(&mut self, display: &Display, dt: Duration);
+    fn render(&mut self, display: &mut Display);
+}
+
+pub async fn run<G: Game>() -> Result<(), Error> {
+    //wgpu_subscriber::initialize_default_subscriber(None);
+    env_logger::init();
+
+    let event_loop = EventLoop::new();
+    let window = WindowBuilder::new()
+        .with_title(env!("CARGO_PKG_NAME"))
+        .build(&event_loop)?;
+    let mut display = Display::new(window).await?;
+    let mut game = G::init(&mut display)?;
+    let mut last_update = Instant::now();
+    let mut is_resumed = true;
+    let mut is_focused = true;
+    let mut is_redraw_requested = true;
+
+    event_loop.run(move |event, _, control_flow| {
+        *control_flow = if is_resumed && is_focused {
+            ControlFlow::Poll
+        } else {
+            ControlFlow::Wait
+        };
+
+        match event {
+            Event::Resumed => is_resumed = true,
+            Event::Suspended => is_resumed = false,
+            Event::RedrawRequested(wid) => {
+                if wid == display.window.id() {
+                    let now = Instant::now();
+                    let dt = now - last_update;
+                    last_update = now;
+
+                    game.update(&mut display, dt);
+                    game.render(&mut display);
+                    is_redraw_requested = false;
+                }
+            }
+            Event::MainEventsCleared => {
+                if is_focused && is_resumed && !is_redraw_requested {
+                    display.window.request_redraw();
+                    is_redraw_requested = true;
+                } else {
+                    // Freeze time while the demo is not in the foreground
+                    last_update = Instant::now();
+                }
+            }
+            Event::WindowEvent {
+                event, window_id, ..
+            } => {
+                if window_id == display.window.id() {
+                    match event {
+                        WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                        WindowEvent::Focused(f) => is_focused = f,
+                        WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                            display.resize(new_inner_size.width, new_inner_size.height);
+                            game.resize(&mut display);
+                        }
+                        WindowEvent::Resized(new_inner_size) => {
+                            display.resize(new_inner_size.width, new_inner_size.height);
+                            game.resize(&mut display);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    });
+}
+
+fn main() -> Result<()> {
+    /*
     env_logger::init();
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new().build(&event_loop).unwrap();
@@ -233,8 +313,8 @@ fn main() {
     use futures::executor::block_on;
 
     // Since main can't be async, we're going to need to block
-    let mut setup = block_on(RenderSetup::new(&window));
-    let mut state = block_on(State::new(&setup.device, setup.sc_desc.format));
+    let mut display = block_on(Display::new(window));
+    let mut state = block_on(State::new(&display.device, display.sc_desc.format));
 
     event_loop.run(move |event, _, control_flow| {
         match event {
@@ -254,11 +334,11 @@ fn main() {
                             _ => {}
                         },
                         WindowEvent::Resized(physical_size) => {
-                            setup.resize(*physical_size);
+                            display.resize(*physical_size);
                         }
                         WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
                             // new_inner_size is &mut so w have to dereference it twice
-                            setup.resize(**new_inner_size);
+                            display.resize(**new_inner_size);
                         }
                         _ => {}
                     }
@@ -266,10 +346,10 @@ fn main() {
             }
             Event::RedrawRequested(_) => {
                 state.update();
-                match state.render(&setup) {
+                match state.render(&display) {
                     Ok(_) => {}
                     // Recreate the swap_chain if lost
-                    Err(wgpu::SwapChainError::Lost) => setup.resize(setup.size),
+                    Err(wgpu::SwapChainError::Lost) => display.resize(display.size),
                     // The system is out of memory, we should probably quit
                     Err(wgpu::SwapChainError::OutOfMemory) => *control_flow = ControlFlow::Exit,
                     // All other errors (Outdated, Timeout) should be resolved by the next frame
@@ -284,4 +364,10 @@ fn main() {
             _ => {}
         }
     });
+    */
+    use futures::executor::block_on;
+
+    block_on(run::<JumpAndRun>())?;
+
+    Ok(())
 }

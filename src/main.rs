@@ -7,6 +7,7 @@ use anyhow::*;
 use imgui_wgpu::{Renderer, RendererConfig};
 use imgui::{FontSource, Condition};
 use imgui::im_str;
+use wgpu::RenderPass;
 
 pub struct Display {
     pub window: Window,
@@ -260,34 +261,8 @@ pub async fn run<G: Game>() -> Result<(), Error> {
         .with_title(env!("CARGO_PKG_NAME"))
         .build(&event_loop)?;
     let mut display = Display::new(window).await?;
-    let mut game = G::init(&mut display)?;
-
-    let mut imgui = imgui::Context::create();
-    let mut platform = imgui_winit_support::WinitPlatform::init(&mut imgui);
-    platform.attach_window(
-        imgui.io_mut(),
-        &display.window,
-        imgui_winit_support::HiDpiMode::Default,
-    );
-    imgui.set_ini_filename(None);
-
-    let hidpi_factor = display.window.scale_factor();
-    let font_size = (13.0 * hidpi_factor) as f32;
-    imgui.io_mut().font_global_scale = (1.0 / hidpi_factor) as f32;
-    imgui.fonts().add_font(&[FontSource::DefaultFontData {
-        config: Some(imgui::FontConfig {
-            oversample_h: 1,
-            pixel_snap_h: true,
-            size_pixels: font_size,
-            ..Default::default()
-        }),
-    }]);
-
-    let renderer_config = RendererConfig {
-        texture_format: display.sc_desc.format,
-        ..Default::default()
-    };
-    let mut renderer = Renderer::new(&mut imgui, &display.device, &display.queue, renderer_config);
+    let mut game = G::init(&display)?;
+    let mut imgui : Option<ImguiWrapper> = Some(ImguiWrapper::new(&display)?);
 
     let mut last_update = Instant::now();
     let mut is_resumed = true;
@@ -301,7 +276,10 @@ pub async fn run<G: Game>() -> Result<(), Error> {
             ControlFlow::Wait
         };
 
-        platform.handle_event(imgui.io_mut(), &display.window, &event);
+        if let Some(imgui) = imgui.as_mut() {
+            imgui.handle_events(&display.window, &event);
+        }
+
         match event {
             Event::Resumed => is_resumed = true,
             Event::Suspended => is_resumed = false,
@@ -311,12 +289,13 @@ pub async fn run<G: Game>() -> Result<(), Error> {
                     let dt = now - last_update;
                     last_update = now;
 
-                    imgui.io_mut().update_delta_time(dt);
-                    game.update(&mut display, dt);
+                    game.update(&display, dt);
 
-                    platform
-                        .prepare_frame(imgui.io_mut(), &display.window)
-                        .expect("Failed to prepare frame!");
+
+                    if let Some(imgui) = imgui.as_mut() {
+                        imgui.prepare(&display.window);
+                        imgui.update_delta_time(dt);
+                    }
 
                     let frame = display.swap_chain.get_current_frame().unwrap().output;
 
@@ -326,27 +305,18 @@ pub async fn run<G: Game>() -> Result<(), Error> {
                             label: Some("Render Encoder"),
                         });
 
-                    let ui = imgui.frame();
-                    game.render(&mut display, &mut encoder, &frame.view, Some(&ui));
+                    match imgui.as_mut() {
+                        Some(imgui) => {
+                            let ui = imgui.imgui.frame();
+                            game.render(&mut display, &mut encoder, &frame.view, Some(&ui));
 
-                    {
-                        platform.prepare_render(&ui, &display.window);
+                            imgui.platform.prepare_render(&ui, &display.window);
 
-                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("UI RenderPass"),
-                            color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                                attachment: &frame.view,
-                                resolve_target: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Load,
-                                    store: true,
-                                },
-                            }],
-                            depth_stencil_attachment: None,
-                        });
-                        renderer
-                            .render(ui.render(), &display.queue, &display.device, &mut pass)
-                            .expect("Failed to render UI!");
+                            imgui.renderer
+                                .render(ui.render(), &display.queue, &display.device, &mut ImguiWrapper::render_pass(&mut encoder, &frame.view))
+                                .expect("Failed to render UI!");
+                        }
+                        None => game.render(&mut display, &mut encoder, &frame.view, None)
                     }
 
                     display.queue.submit(Some(encoder.finish()));
@@ -386,6 +356,81 @@ pub async fn run<G: Game>() -> Result<(), Error> {
         }
 
     });
+}
+
+struct ImguiWrapper {
+    imgui: imgui::Context,
+    platform: imgui_winit_support::WinitPlatform,
+    renderer: Renderer,
+}
+
+impl ImguiWrapper {
+    fn new(display: &Display) -> Result<Self, Error> {
+
+        let mut imgui = imgui::Context::create();
+        let mut platform = imgui_winit_support::WinitPlatform::init(&mut imgui);
+        platform.attach_window(
+            imgui.io_mut(),
+            &display.window,
+            imgui_winit_support::HiDpiMode::Default,
+        );
+        imgui.set_ini_filename(None);
+
+        let hidpi_factor = display.window.scale_factor();
+        let font_size = (13.0 * hidpi_factor) as f32;
+        imgui.io_mut().font_global_scale = (1.0 / hidpi_factor) as f32;
+        imgui.fonts().add_font(&[FontSource::DefaultFontData {
+            config: Some(imgui::FontConfig {
+                oversample_h: 1,
+                pixel_snap_h: true,
+                size_pixels: font_size,
+                ..Default::default()
+            }),
+        }]);
+
+        let renderer_config = RendererConfig {
+            texture_format: display.sc_desc.format,
+            ..Default::default()
+        };
+        let renderer = Renderer::new(&mut imgui, &display.device, &display.queue, renderer_config);
+
+        Ok(Self {
+            imgui,
+            platform,
+            renderer,
+        })
+    }
+
+    fn handle_events(&mut self, window: &Window, event: &Event<()>){
+        self.platform.handle_event(self.imgui.io_mut(), window, event);
+    }
+
+    fn prepare(&mut self, window: &Window){
+        self.platform
+            .prepare_frame(self.imgui.io_mut(), window)
+            .expect("Failed to prepare frame!");
+    }
+
+    fn update_delta_time(&mut self, dt: Duration){
+        self.imgui.io_mut().update_delta_time(dt);
+    }
+
+    fn render_pass<'a>(encoder: &'a mut wgpu::CommandEncoder, frame: &'a wgpu::TextureView) -> RenderPass<'a> {
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("UI RenderPass"),
+            color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                attachment: frame,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: true,
+                },
+            }],
+            depth_stencil_attachment: None,
+        })
+    }
+
+
 }
 
 fn main() -> Result<()> {

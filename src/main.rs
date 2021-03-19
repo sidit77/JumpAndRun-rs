@@ -213,7 +213,7 @@ impl Game for JumpAndRun {
                     ));
                     ui.separator();
                     imgui::Drag::new(im_str!("Camera Position")).speed(0.1).build_array(&ui, self.camera.position.as_mut());
-                    imgui::Drag::new(im_str!("Camera Scale")).speed(0.1).build(&ui, &mut self.camera.scale);
+                    imgui::Drag::new(im_str!("Camera Scale")).speed(0.1).range(0.1..).build(&ui, &mut self.camera.scale);
                 });
         }
 

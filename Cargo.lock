@@ -693,6 +693,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "glam"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27e6eecbd94ac86b2e1f3b0065ed5f17c097c15d668dddb84208a141e271403b"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -848,6 +857,7 @@ dependencies = [
  "env_logger",
  "fs_extra",
  "futures",
+ "glam",
  "glob",
  "log",
  "shaderc",

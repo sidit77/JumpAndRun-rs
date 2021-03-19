@@ -4,59 +4,6 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use wgpu::util::DeviceExt;
 use std::iter;
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    position: [f32; 3],
-    color: [f32; 3],
-}
-
-impl Vertex {
-    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::InputStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float3,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float3,
-                },
-            ],
-        }
-    }
-}
-
-const VERTICES: &[Vertex] = &[
-    Vertex {
-        position: [-0.0868241, 0.49240386, 0.0],
-        color: [0.5, 0.0, 0.5],
-    }, // A
-    Vertex {
-        position: [-0.49513406, 0.06958647, 0.0],
-        color: [0.5, 0.0, 0.5],
-    }, // B
-    Vertex {
-        position: [-0.21918549, -0.44939706, 0.0],
-        color: [0.5, 0.0, 0.5],
-    }, // C
-    Vertex {
-        position: [0.35966998, -0.3473291, 0.0],
-        color: [0.5, 0.0, 0.5],
-    }, // D
-    Vertex {
-        position: [0.44147372, 0.2347359, 0.0],
-        color: [0.5, 0.0, 0.5],
-    }, // E
-];
-
-const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
-
 struct RenderSetup {
     surface: wgpu::Surface,
     device: wgpu::Device,
@@ -140,6 +87,13 @@ macro_rules! include_spirv_out {
     };
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct Vertex {
+    position: glam::Vec3,
+    color: glam::Vec3,
+}
+
 impl State {
     async fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
 
@@ -159,7 +113,13 @@ impl State {
             vertex: wgpu::VertexState {
                 module: &vs_module,
                 entry_point: "main",
-                buffers: &[Vertex::desc()],
+                buffers: &[
+                    wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                        step_mode: wgpu::InputStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float3],
+                    }
+                ],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &fs_module,
@@ -187,18 +147,28 @@ impl State {
             },
         });
 
+        let vertices : Vec<Vertex> = vec![
+            Vertex { position: glam::vec3(-0.08682410,  0.49240386, 0.0), color: glam::vec3(0.5, 0.0, 0.5) }, // A
+            Vertex { position: glam::vec3(-0.49513406,  0.06958647, 0.0), color: glam::vec3(0.5, 0.0, 0.5) }, // B
+            Vertex { position: glam::vec3(-0.21918549, -0.44939706, 0.0), color: glam::vec3(0.5, 0.0, 0.5) }, // C
+            Vertex { position: glam::vec3( 0.35966998, -0.34732910, 0.0), color: glam::vec3(0.5, 0.0, 0.5) }, // D
+            Vertex { position: glam::vec3( 0.44147372,  0.23473590, 0.0), color: glam::vec3(0.5, 0.0, 0.5) }, // E
+        ];
+
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(VERTICES),
+            contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsage::VERTEX,
         });
 
+        let indices : Vec<u16> = vec![0, 1, 4, 1, 2, 4, 2, 3, 4];
+
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(INDICES),
+            contents: bytemuck::cast_slice(&indices),
             usage: wgpu::BufferUsage::INDEX,
         });
-        let num_indices = INDICES.len() as u32;
+        let num_indices = indices.len() as u32;
 
         Self {
             render_pipeline,

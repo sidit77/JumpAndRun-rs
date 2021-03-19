@@ -14,6 +14,7 @@ wgpu = "0.7"
 futures = "0.3"
 bytemuck = { version = "1.5", features = ["derive"] }
 anyhow = "1.0"
+glam = {version = "0.13.0", features = ["bytemuck"]}
 
 [build-dependencies]
 anyhow = "1.0"

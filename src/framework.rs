@@ -6,6 +6,7 @@ use anyhow::*;
 use imgui_wgpu::{Renderer, RendererConfig};
 use imgui::FontSource;
 use wgpu::RenderPass;
+use winit::dpi::{Size, PhysicalSize};
 
 pub struct Display {
     pub window: Window,
@@ -93,6 +94,7 @@ pub async fn run<G: Game>() -> Result<(), Error> {
 
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
+        .with_inner_size(Size::Physical(PhysicalSize::new(1280, 720)))
         .with_title(env!("CARGO_PKG_NAME"))
         .build(&event_loop)?;
     let mut display = Display::new(window).await?;

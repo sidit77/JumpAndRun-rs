@@ -29,10 +29,6 @@ impl Default for Camera {
 
 impl Camera {
 
-    fn new() -> Self {
-        Default::default()
-    }
-
     fn calc_aspect(&mut self, width: u32, height: u32){
         self.aspect = width as f32 / height as f32;
     }
@@ -71,9 +67,11 @@ impl Game for JumpAndRun {
         let vs_module = display.device.create_shader_module(&include_spirv_out!("shader.vert.spv"));
         let fs_module = display.device.create_shader_module(&include_spirv_out!("shader.frag.spv"));
 
-        let mut camera = Camera::new();
-        camera.scale = 1.0;
-        camera.calc_aspect(display.sc_desc.width, display.sc_desc.height);
+        let camera = Camera {
+            scale: 13.0,
+            aspect: display.sc_desc.width as f32 / display.sc_desc.height as f32,
+            position: glam::vec2(16.0, -12.0)
+        };
 
         let uniform_buffer = display.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {

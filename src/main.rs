@@ -1,12 +1,13 @@
 use wgpu::util::DeviceExt;
 use std::time::Duration;
+use std::path::PathBuf;
 use anyhow::*;
 use imgui::Condition;
 use imgui::im_str;
 use glam::*;
 use crate::framework::{run, Display, Game};
 use wgpu::{BlendFactor, BlendOperation};
-use ogmo3::{Level, Layer};
+use ogmo3::{Level, Layer, Project};
 
 mod framework;
 
@@ -108,7 +109,44 @@ impl Game for JumpAndRun {
             ],
             label: Some("Uniform Bind Group"),
         });
-        let diffuse_image = image::open("./assets/textures/tilesheet_complete.png").unwrap();
+
+        let base_path = PathBuf::from("./assets/");
+        let project = Project::from_file(base_path.join("project.ogmo"))?;
+        let level = Level::from_file(base_path.join("levels/level1.json"))?;
+
+        let (tex_scale, diffuse_image) = project.tilesets.first().map(|ts| {
+            let diffuse_image = image::open(base_path.join(&ts.path)).unwrap();
+            (glam::vec2(ts.tile_width as f32 / diffuse_image.width() as f32, ts.tile_height as f32 / diffuse_image.height() as f32), diffuse_image)
+        }).unwrap();
+
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        match level.layers.first().unwrap() {
+            Layer::TileCoords(layer) => {
+                for tile in layer.unpack() {
+                    if let Some(coords) = tile.grid_coords {
+                        let pos_coord = glam::vec2(tile.grid_position.x as f32, -tile.grid_position.y as f32);
+                        let uv_coord = glam::vec2(coords.x as f32, coords.y as f32);
+                        let ci = vertices.len() as u16;
+
+                        vertices.push(Vertex { position: glam::vec2(0.0, 0.0) + pos_coord, tex_coords: (glam::vec2(0.0, 1.0) + uv_coord) * tex_scale });
+                        vertices.push(Vertex { position: glam::vec2(1.0, 0.0) + pos_coord, tex_coords: (glam::vec2(1.0, 1.0) + uv_coord) * tex_scale });
+                        vertices.push(Vertex { position: glam::vec2(1.0, 1.0) + pos_coord, tex_coords: (glam::vec2(1.0, 0.0) + uv_coord) * tex_scale });
+                        vertices.push(Vertex { position: glam::vec2(0.0, 1.0) + pos_coord, tex_coords: (glam::vec2(0.0, 0.0) + uv_coord) * tex_scale });
+
+                        indices.push(0 + ci);
+                        indices.push(1 + ci);
+                        indices.push(2 + ci);
+                        indices.push(0 + ci);
+                        indices.push(2 + ci);
+                        indices.push(3 + ci);
+
+                    }
+                }
+            }
+            _ => panic!("layer type not supported")
+        }
+
         let diffuse_rgba = diffuse_image.as_rgba8().unwrap();
 
         use image::GenericImageView;
@@ -267,52 +305,12 @@ impl Game for JumpAndRun {
             },
         });
 
-        let mut vertices = Vec::new();
-        let mut indices = Vec::new();
-
-        let level = Level::from_file("./assets/levels/level1.json").unwrap();
-
-        match level.layers.first().unwrap() {
-            Layer::TileCoords(layer) => {
-                for tile in layer.unpack() {
-                    if let Some(coords) = tile.grid_coords {
-                        let pos_coord = glam::vec2(tile.grid_position.x as f32, -tile.grid_position.y as f32);
-                        let uv_coord = glam::vec2(coords.x as f32, coords.y as f32);
-                        let ci = vertices.len() as u16;
-
-                        vertices.push(Vertex { position: glam::vec2(0.0, 0.0) + pos_coord, tex_coords: (glam::vec2(0.0, 1.0) + uv_coord) * glam::vec2(1.0 / 22.0, 1.0 / 12.0) });
-                        vertices.push(Vertex { position: glam::vec2(1.0, 0.0) + pos_coord, tex_coords: (glam::vec2(1.0, 1.0) + uv_coord) * glam::vec2(1.0 / 22.0, 1.0 / 12.0) });
-                        vertices.push(Vertex { position: glam::vec2(1.0, 1.0) + pos_coord, tex_coords: (glam::vec2(1.0, 0.0) + uv_coord) * glam::vec2(1.0 / 22.0, 1.0 / 12.0) });
-                        vertices.push(Vertex { position: glam::vec2(0.0, 1.0) + pos_coord, tex_coords: (glam::vec2(0.0, 0.0) + uv_coord) * glam::vec2(1.0 / 22.0, 1.0 / 12.0) });
-
-                        indices.push(0 + ci);
-                        indices.push(1 + ci);
-                        indices.push(2 + ci);
-                        indices.push(0 + ci);
-                        indices.push(2 + ci);
-                        indices.push(3 + ci);
-
-                    }
-                }
-            }
-            _ => panic!("layer type not supported")
-        }
-
-
-        //let vertices : Vec<Vertex> = vec![
-        //    Vertex { position: glam::vec2(0.0, 0.0), tex_coords: glam::vec2(2.0 / 22.0, 1.0 / 12.0) }, // A
-        //    Vertex { position: glam::vec2(1.0, 0.0), tex_coords: glam::vec2(1.0 / 22.0, 1.0 / 12.0) }, // B
-        //    Vertex { position: glam::vec2(1.0, 1.0), tex_coords: glam::vec2(1.0 / 22.0, 0.0 / 12.0) }, // C
-        //    Vertex { position: glam::vec2(0.0, 1.0), tex_coords: glam::vec2(2.0 / 22.0, 0.0 / 12.0) }, // D
-        //];
 
         let vertex_buffer = display.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
             contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsage::VERTEX,
         });
-
-        //let indices : Vec<u16> = vec![0, 1, 2, 0, 2, 3];
 
         let index_buffer = display.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),

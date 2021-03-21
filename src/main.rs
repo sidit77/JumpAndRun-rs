@@ -8,38 +8,11 @@ use glam::*;
 use crate::framework::{run, Display, Game};
 use wgpu::{BlendFactor, BlendOperation};
 use ogmo3::{Level, Layer, Project};
+use crate::camera::{Camera, CameraBuffer, UpdateCameraBuffer, BindCameraBuffer};
 
 mod framework;
+mod camera;
 
-struct Camera {
-    position: Vec2,
-    aspect: f32,
-    scale: f32
-}
-
-impl Default for Camera {
-    fn default() -> Self {
-        Self{
-            position: vec2(0.0,0.0),
-            aspect: 1.0,
-            scale: 350.0
-        }
-    }
-}
-
-impl Camera {
-
-    fn calc_aspect(&mut self, width: u32, height: u32){
-        self.aspect = width as f32 / height as f32;
-    }
-
-    fn to_matrix(&self) -> Mat4 {
-        Mat4::orthographic_rh(self.position.x - (self.scale * self.aspect),
-                              self.position.x + (self.scale * self.aspect),
-                              self.position.y - self.scale,
-                              self.position.y + self.scale, 0.0, 100.0)
-    }
-}
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -54,8 +27,7 @@ struct JumpAndRun {
     index_buffer: wgpu::Buffer,
     num_indices: u32,
     camera: Camera,
-    uniform_buffer: wgpu::Buffer,
-    uniform_bind_group: wgpu::BindGroup,
+    camera_buffer: CameraBuffer,
     diffuse_bind_group: wgpu::BindGroup,
 }
 
@@ -73,40 +45,7 @@ impl Game for JumpAndRun {
             position: glam::vec2(16.0, -12.0)
         };
 
-        let uniform_buffer = display.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Uniform Buffer"),
-                contents: bytemuck::cast_slice(&[camera.to_matrix()]),
-                usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
-            }
-        );
-
-        let uniform_bind_group_layout = display.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }
-            ],
-            label: Some("Uniform Bind Group Layout"),
-        });
-
-        let uniform_bind_group = display.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &uniform_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                }
-            ],
-            label: Some("Uniform Bind Group"),
-        });
+        let camera_buffer = CameraBuffer::new(&display.device);
 
         let base_path = PathBuf::from("./assets/");
         let project = Project::from_file(base_path.join("project.ogmo"))?;
@@ -250,7 +189,7 @@ impl Game for JumpAndRun {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[
                     &texture_bind_group_layout,
-                    &uniform_bind_group_layout
+                    camera_buffer.layout()
                 ],
                 push_constant_ranges: &[],
             });
@@ -325,8 +264,7 @@ impl Game for JumpAndRun {
             index_buffer,
             num_indices,
             camera,
-            uniform_buffer,
-            uniform_bind_group,
+            camera_buffer,
             diffuse_bind_group
         })
     }
@@ -359,7 +297,7 @@ impl Game for JumpAndRun {
                 });
         }
 
-        display.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[self.camera.to_matrix()]));
+        display.queue.update_camera_buffer(&self.camera_buffer, &self.camera);
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
@@ -383,7 +321,7 @@ impl Game for JumpAndRun {
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
-        render_pass.set_bind_group(1, &self.uniform_bind_group, &[]);
+        render_pass.set_camera_buffer(1, &self.camera_buffer);
         render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
 
         //Ok(())

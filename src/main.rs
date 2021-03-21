@@ -8,10 +8,12 @@ use glam::*;
 use crate::framework::{run, Display, Game};
 use wgpu::{BlendFactor, BlendOperation};
 use ogmo3::{Level, Layer, Project};
-use crate::camera::{Camera, CameraBuffer, UpdateCameraBuffer, BindCameraBuffer};
+use crate::camera::Camera;
+use crate::buffer::{UniformBuffer, UpdateUniformBuffer, BindUniformBuffer};
 
 mod framework;
 mod camera;
+mod buffer;
 
 
 #[repr(C)]
@@ -27,7 +29,7 @@ struct JumpAndRun {
     index_buffer: wgpu::Buffer,
     num_indices: u32,
     camera: Camera,
-    camera_buffer: CameraBuffer,
+    camera_buffer: UniformBuffer<Mat4>,
     diffuse_bind_group: wgpu::BindGroup,
 }
 
@@ -45,7 +47,7 @@ impl Game for JumpAndRun {
             position: glam::vec2(16.0, -12.0)
         };
 
-        let camera_buffer = CameraBuffer::new(&display.device);
+        let camera_buffer = UniformBuffer::<Mat4>::new(&display.device);
 
         let base_path = PathBuf::from("./assets/");
         let project = Project::from_file(base_path.join("project.ogmo"))?;
@@ -297,7 +299,7 @@ impl Game for JumpAndRun {
                 });
         }
 
-        display.queue.update_camera_buffer(&self.camera_buffer, &self.camera);
+        display.queue.update_uniform_buffer(&self.camera_buffer, &self.camera.to_matrix());
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
@@ -321,7 +323,7 @@ impl Game for JumpAndRun {
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
-        render_pass.set_camera_buffer(1, &self.camera_buffer);
+        render_pass.set_uniform_buffer(1, &self.camera_buffer);
         render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
 
         //Ok(())

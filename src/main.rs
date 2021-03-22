@@ -6,10 +6,11 @@ use imgui::Condition;
 use imgui::im_str;
 use glam::*;
 use crate::framework::{run, Display, Game};
-use wgpu::{BlendFactor, BlendOperation};
+use wgpu::{BlendFactor, BlendOperation, Extent3d};
 use ogmo3::{Level, Layer, Project};
 use crate::camera::Camera;
 use crate::buffer::{UniformBuffer, UpdateUniformBuffer, BindUniformBuffer};
+use image::EncodableLayout;
 
 mod framework;
 mod camera;
@@ -60,10 +61,16 @@ impl Game for JumpAndRun {
 
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
-        match level.layers.first().unwrap() {
+        let (pi, pi_width, pi_height) = match level.layers.first().unwrap() {
             Layer::TileCoords(layer) => {
+                let x_tile = (1.0 / tex_scale.x).round() as i32;
+                let pi_width = layer.grid_cells_x;
+                let pi_height = layer.grid_cells_y;
+                let mut pi = vec![0u16; (pi_width * pi_height) as usize].into_boxed_slice();
                 for tile in layer.unpack() {
                     if let Some(coords) = tile.grid_coords {
+                        pi[(tile.grid_position.x + tile.grid_position.y * pi_width) as usize] = (1 + coords.x + x_tile * coords.y) as u16;
+
                         let pos_coord = glam::vec2(tile.grid_position.x as f32, -tile.grid_position.y as f32);
                         let uv_coord = glam::vec2(coords.x as f32, coords.y as f32);
                         let ci = vertices.len() as u16;
@@ -82,9 +89,10 @@ impl Game for JumpAndRun {
 
                     }
                 }
+                (pi, pi_width, pi_height)
             }
             _ => panic!("layer type not supported")
-        }
+        };
 
         let diffuse_rgba = diffuse_image.as_rgba8().unwrap();
 
@@ -130,6 +138,26 @@ impl Game for JumpAndRun {
             texture_size,
         );
 
+        let placement_texture = display.device.create_texture_with_data(&display.queue, &wgpu::TextureDescriptor {
+            // All textures are stored as 3D, we represent our 2D texture
+            // by setting depth to 1.
+            size: Extent3d {
+                width: pi_width as u32,
+                height: pi_height as u32,
+                depth: 1,
+            },
+            mip_level_count: 1, // We'll talk about this a little later
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R16Uint,
+            // SAMPLED tells wgpu that we want to use this texture in shaders
+            // COPY_DST means that we want to copy data to this texture
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
+            label: Some("placement_texture"),
+        }, pi.as_bytes());
+
+        let placement_texture_view = placement_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         let diffuse_texture_view = diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let diffuse_sampler = display.device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -157,6 +185,16 @@ impl Game for JumpAndRun {
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
                         visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Uint,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
                         ty: wgpu::BindingType::Sampler {
                             comparison: false,
                             filtering: true,
@@ -178,6 +216,10 @@ impl Game for JumpAndRun {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&placement_texture_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
                         resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
                     }
                 ],
@@ -244,6 +286,19 @@ impl Game for JumpAndRun {
             },
         });
 
+        vertices.clear();
+        vertices.push(Vertex { position: glam::vec2(0.0, 0.0) * glam::vec2(pi_width as f32, pi_height as f32), tex_coords: glam::vec2(0.0, 1.0)});
+        vertices.push(Vertex { position: glam::vec2(1.0, 0.0) * glam::vec2(pi_width as f32, pi_height as f32), tex_coords: glam::vec2(1.0, 1.0)});
+        vertices.push(Vertex { position: glam::vec2(1.0, 1.0) * glam::vec2(pi_width as f32, pi_height as f32), tex_coords: glam::vec2(1.0, 0.0)});
+        vertices.push(Vertex { position: glam::vec2(0.0, 1.0) * glam::vec2(pi_width as f32, pi_height as f32), tex_coords: glam::vec2(0.0, 0.0)});
+
+        indices.clear();
+        indices.push(0);
+        indices.push(1);
+        indices.push(2);
+        indices.push(0);
+        indices.push(2);
+        indices.push(3);
 
         let vertex_buffer = display.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),

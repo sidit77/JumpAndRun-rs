@@ -10,7 +10,7 @@ use wgpu::{BlendFactor, BlendOperation, Extent3d};
 use ogmo3::{Level, Layer, Project};
 use crate::camera::Camera;
 use crate::buffer::{UniformBuffer, UpdateUniformBuffer, BindUniformBuffer};
-use image::{EncodableLayout, GenericImageView};
+use image::GenericImageView;
 use ogmo3::project::Tileset;
 
 mod framework;
@@ -68,14 +68,14 @@ impl<T> TextureData<T> where T : bytemuck::Pod{
     #[allow(dead_code)]
     fn get_pixel(&self, x: u32, y: u32, layer:u32) -> &T {
         std::assert!(x < self.width && y < self.height && layer < self.depth);
-        let index = (x + y * self.height) as usize;
+        let index = (x + y * self.width) as usize;
         &self.get_layer(layer)[index]
     }
 
     #[allow(dead_code)]
     fn get_pixel_mut(&mut self, x: u32, y: u32, layer:u32) -> &mut T {
         std::assert!(x < self.width && y < self.height && layer < self.depth);
-        let index = (x + y * self.height) as usize;
+        let index = (x + y * self.width) as usize;
         &mut self.get_layer_mut(layer)[index]
     }
 
@@ -101,7 +101,7 @@ impl TileSetResult {
         Some((coords.x + self.tiles_per_row as i32 * coords.y) as u32)
     }
 
-    fn parse(device: &wgpu::Device, queue: &wgpu::Queue, tileset: &Tileset, base_path: PathBuf) -> Result<Self, Error> {
+    fn parse(device: &wgpu::Device, queue: &wgpu::Queue, tileset: &Tileset, base_path: &PathBuf) -> Result<Self, Error> {
         let image = image::open(base_path.join(&tileset.path))?;
         let tile_w = tileset.tile_width  as u32;
         let tile_h = tileset.tile_height as u32;
@@ -160,22 +160,21 @@ impl Game for JumpAndRun {
         let project = Project::from_file(base_path.join("project.ogmo"))?;
         let level = Level::from_file(base_path.join("levels/level1.json"))?;
 
-        let tileset = TileSetResult::parse(&display.device, &display.queue, project.tilesets.first().unwrap(), base_path)?;
+        let tileset = TileSetResult::parse(&display.device, &display.queue, project.tilesets.first().unwrap(), &base_path)?;
         let tileset_texture_view = tileset.texture.create_view(&Default::default());
 
-        let (pi, pi_width, pi_height) = match level.layers.first().unwrap() {
+        let pt_data = match level.layers.first().unwrap() {
             Layer::TileCoords(layer) => {
-                let pi_width = layer.grid_cells_x;
-                let pi_height = layer.grid_cells_y;
-                let mut pi = vec![0u16; (pi_width * pi_height) as usize].into_boxed_slice();
+                let mut pt_data = TextureData::<u16>::new(layer.grid_cells_x as u32, layer.grid_cells_y as u32, 1);
                 for tile in layer.unpack() {
                     if let Some(coords) = tile.grid_coords {
-
-                        pi[(tile.grid_position.x + tile.grid_position.y * pi_width) as usize] = (1 + tileset.get_tile_id(coords).unwrap()) as u16;
+                        *pt_data.get_pixel_mut(
+                            tile.grid_position.x as u32,
+                            tile.grid_position.y as u32, 0)  = (1 + tileset.get_tile_id(coords).unwrap()) as u16
 
                     }
                 }
-                (pi, pi_width, pi_height)
+                pt_data
             }
             _ => panic!("layer type not supported")
         };
@@ -184,8 +183,8 @@ impl Game for JumpAndRun {
             // All textures are stored as 3D, we represent our 2D texture
             // by setting depth to 1.
             size: Extent3d {
-                width: pi_width as u32,
-                height: pi_height as u32,
+                width: pt_data.width,
+                height: pt_data.height,
                 depth: 1,
             },
             mip_level_count: 1, // We'll talk about this a little later
@@ -196,7 +195,7 @@ impl Game for JumpAndRun {
             // COPY_DST means that we want to copy data to this texture
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
             label: Some("placement_texture"),
-        }, pi.as_bytes());
+        }, pt_data.as_bytes());
 
         let placement_texture_view = placement_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -328,10 +327,10 @@ impl Game for JumpAndRun {
         });
 
         let vertices = vec![
-            Vertex { position: glam::vec2(0.0, 0.0) * glam::vec2(pi_width as f32, pi_height as f32), tex_coords: glam::vec2(0.0, 1.0)},
-            Vertex { position: glam::vec2(1.0, 0.0) * glam::vec2(pi_width as f32, pi_height as f32), tex_coords: glam::vec2(1.0, 1.0)},
-            Vertex { position: glam::vec2(1.0, 1.0) * glam::vec2(pi_width as f32, pi_height as f32), tex_coords: glam::vec2(1.0, 0.0)},
-            Vertex { position: glam::vec2(0.0, 1.0) * glam::vec2(pi_width as f32, pi_height as f32), tex_coords: glam::vec2(0.0, 0.0)},
+            Vertex { position: glam::vec2(0.0, 0.0) * glam::vec2(pt_data.width as f32, pt_data.height as f32), tex_coords: glam::vec2(0.0, 1.0)},
+            Vertex { position: glam::vec2(1.0, 0.0) * glam::vec2(pt_data.width as f32, pt_data.height as f32), tex_coords: glam::vec2(1.0, 1.0)},
+            Vertex { position: glam::vec2(1.0, 1.0) * glam::vec2(pt_data.width as f32, pt_data.height as f32), tex_coords: glam::vec2(1.0, 0.0)},
+            Vertex { position: glam::vec2(0.0, 1.0) * glam::vec2(pt_data.width as f32, pt_data.height as f32), tex_coords: glam::vec2(0.0, 0.0)},
         ];
         let indices : Vec<u16> = vec![0, 1, 2, 0, 2, 3];
 

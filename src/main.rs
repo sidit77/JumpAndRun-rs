@@ -6,12 +6,10 @@ use imgui::Condition;
 use imgui::im_str;
 use glam::*;
 use crate::framework::{run, Display, Game};
-use wgpu::{BlendFactor, BlendOperation, Extent3d};
+use wgpu::{BlendFactor, BlendOperation};
 use ogmo3::{Level, Layer, Project};
 use crate::camera::Camera;
 use crate::buffer::{UniformBuffer, UpdateUniformBuffer, BindUniformBuffer};
-use image::{GenericImageView, GenericImage};
-use ogmo3::project::Tileset;
 use crate::texture::TextureData;
 
 mod framework;
@@ -37,42 +35,11 @@ struct JumpAndRun {
     diffuse_bind_group: wgpu::BindGroup,
 }
 
-struct TileSetResult {
-    texture: wgpu::Texture,
-    tiles_per_row: u32,
-    tiles_per_column: u32
-}
-
-impl TileSetResult {
-
-    fn get_tile_id(&self, coords: ogmo3::Vec2<i32>) -> Option<u32> {
-        if !(0i32..self.tiles_per_row as i32).contains(&coords.x) || !(0i32..self.tiles_per_column as i32).contains(&coords.y) {
-            return None;
-        }
-        Some((coords.x + self.tiles_per_row as i32 * coords.y) as u32)
+fn get_tile_id(coords: ogmo3::Vec2<i32>, tiles_per_row: i32) -> Option<u32> {
+    if !(0..tiles_per_row).contains(&coords.x) {
+        return None;
     }
-
-    fn parse(device: &wgpu::Device, queue: &wgpu::Queue, tileset: &Tileset, base_path: &PathBuf) -> Result<Self, Error> {
-        let image = image::open(base_path.join(&tileset.path))?;
-        let tile_w = tileset.tile_width  as u32;
-        let tile_h = tileset.tile_height as u32;
-        let expand_x = image.width()  / tile_w;
-        let expand_y = image.height() / tile_h;
-
-        let mut image_data = TextureData::<[u8; 4]>::new(tile_w, tile_h, expand_x * expand_y);
-
-        for (i, x, y) in (0..expand_y).flat_map(|y| (0..expand_x).map(move |x| (x + expand_x * y, x, y))) {
-            for (px, py) in (0..tile_h).flat_map(|y| (0..tile_w).map(move |x| (x, y))) {
-                *image_data.get_pixel_mut(px, py, i) = image.get_pixel(x * tile_w + px,y * tile_h + py).0;
-            }
-        }
-
-        Ok(Self{
-            texture: image_data.to_texture(device, queue, wgpu::TextureFormat::Rgba8UnormSrgb, wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST),
-            tiles_per_row: expand_x,
-            tiles_per_column: expand_y
-        })
-    }
+    Some((coords.x + tiles_per_row as i32 * coords.y) as u32)
 }
 
 impl Game for JumpAndRun {
@@ -95,8 +62,12 @@ impl Game for JumpAndRun {
         let project = Project::from_file(base_path.join("project.ogmo"))?;
         let level = Level::from_file(base_path.join("levels/level1.json"))?;
 
-        let tileset = TileSetResult::parse(&display.device, &display.queue, project.tilesets.first().unwrap(), &base_path)?;
-        let tileset_texture_view = tileset.texture.create_view(&Default::default());
+        let (tileset_texture, tiles_per_row) = project.tilesets.first().map(|ts|{
+            let td = TextureData::parse_tileset(&base_path.join(&ts.path), ts.tile_width as u32, ts.tile_height as u32).unwrap();
+            (td.to_texture(&display.device, &display.queue, wgpu::TextureFormat::Rgba8UnormSrgb, wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST),
+            td.depth_x().unwrap())
+        }).unwrap();
+        let tileset_texture_view = tileset_texture.create_view(&Default::default());
 
         let pt_data = match level.layers.first().unwrap() {
             Layer::TileCoords(layer) => {
@@ -105,7 +76,7 @@ impl Game for JumpAndRun {
                     if let Some(coords) = tile.grid_coords {
                         *pt_data.get_pixel_mut(
                             tile.grid_position.x as u32,
-                            tile.grid_position.y as u32, 0)  = (1 + tileset.get_tile_id(coords).unwrap()) as u16
+                            tile.grid_position.y as u32, 0)  = (1 + get_tile_id(coords, tiles_per_row as i32).unwrap()) as u16
 
                     }
                 }
@@ -245,10 +216,10 @@ impl Game for JumpAndRun {
         });
 
         let vertices = vec![
-            Vertex { position: glam::vec2(0.0, 0.0) * glam::vec2(pt_data.width as f32, pt_data.height as f32), tex_coords: glam::vec2(0.0, 1.0)},
-            Vertex { position: glam::vec2(1.0, 0.0) * glam::vec2(pt_data.width as f32, pt_data.height as f32), tex_coords: glam::vec2(1.0, 1.0)},
-            Vertex { position: glam::vec2(1.0, 1.0) * glam::vec2(pt_data.width as f32, pt_data.height as f32), tex_coords: glam::vec2(1.0, 0.0)},
-            Vertex { position: glam::vec2(0.0, 1.0) * glam::vec2(pt_data.width as f32, pt_data.height as f32), tex_coords: glam::vec2(0.0, 0.0)},
+            Vertex { position: glam::vec2(0.0, 0.0) * glam::vec2(pt_data.width() as f32, pt_data.height() as f32), tex_coords: glam::vec2(0.0, 1.0)},
+            Vertex { position: glam::vec2(1.0, 0.0) * glam::vec2(pt_data.width() as f32, pt_data.height() as f32), tex_coords: glam::vec2(1.0, 1.0)},
+            Vertex { position: glam::vec2(1.0, 1.0) * glam::vec2(pt_data.width() as f32, pt_data.height() as f32), tex_coords: glam::vec2(1.0, 0.0)},
+            Vertex { position: glam::vec2(0.0, 1.0) * glam::vec2(pt_data.width() as f32, pt_data.height() as f32), tex_coords: glam::vec2(0.0, 0.0)},
         ];
         let indices : Vec<u16> = vec![0, 1, 2, 0, 2, 3];
 

@@ -10,12 +10,14 @@ use wgpu::{BlendFactor, BlendOperation, Extent3d};
 use ogmo3::{Level, Layer, Project};
 use crate::camera::Camera;
 use crate::buffer::{UniformBuffer, UpdateUniformBuffer, BindUniformBuffer};
-use image::GenericImageView;
+use image::{GenericImageView, GenericImage};
 use ogmo3::project::Tileset;
+use crate::texture::TextureData;
 
 mod framework;
 mod camera;
 mod buffer;
+mod texture;
 
 
 #[repr(C)]
@@ -33,57 +35,6 @@ struct JumpAndRun {
     camera: Camera,
     camera_buffer: UniformBuffer<Mat4>,
     diffuse_bind_group: wgpu::BindGroup,
-}
-
-struct TextureData<T> where T : bytemuck::Pod{
-    width: u32,
-    height: u32,
-    depth: u32,
-    pixels: Box<[T]>
-}
-
-impl<T> TextureData<T> where T : bytemuck::Pod{
-
-    fn new(width: u32, height: u32, depth: u32) -> Self {
-        Self {
-            width,
-            height,
-            depth,
-            pixels: vec![T::zeroed(); (width * height * depth) as usize].into_boxed_slice()
-        }
-    }
-
-    #[allow(dead_code)]
-    fn get_layer(&self, layer: u32) -> &[T]{
-        std::assert!(layer < self.depth);
-        &self.pixels[(layer * (self.width * self.height)) as usize..((layer + 1) * (self.width * self.height)) as usize]
-    }
-
-    #[allow(dead_code)]
-    fn get_layer_mut(&mut self, layer: u32) -> &mut [T]{
-        std::assert!(layer < self.depth);
-        &mut self.pixels[(layer * (self.width * self.height)) as usize..((layer + 1) * (self.width * self.height)) as usize]
-    }
-
-    #[allow(dead_code)]
-    fn get_pixel(&self, x: u32, y: u32, layer:u32) -> &T {
-        std::assert!(x < self.width && y < self.height && layer < self.depth);
-        let index = (x + y * self.width) as usize;
-        &self.get_layer(layer)[index]
-    }
-
-    #[allow(dead_code)]
-    fn get_pixel_mut(&mut self, x: u32, y: u32, layer:u32) -> &mut T {
-        std::assert!(x < self.width && y < self.height && layer < self.depth);
-        let index = (x + y * self.width) as usize;
-        &mut self.get_layer_mut(layer)[index]
-    }
-
-    #[allow(dead_code)]
-    fn as_bytes(&self) -> &[u8] {
-        bytemuck::cast_slice(&self.pixels)
-    }
-
 }
 
 struct TileSetResult {
@@ -116,24 +67,8 @@ impl TileSetResult {
             }
         }
 
-        let texture  = device.create_texture_with_data(queue, &wgpu::TextureDescriptor {
-            size: Extent3d {
-                width: tile_w,
-                height: tile_h,
-                depth: expand_x * expand_y
-            },
-            mip_level_count: 1, // We'll talk about this a little later
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            // SAMPLED tells wgpu that we want to use this texture in shaders
-            // COPY_DST means that we want to copy data to this texture
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
-            label: Some("tile_set_texture"),
-        }, image_data.as_bytes());
-
         Ok(Self{
-            texture,
+            texture: image_data.to_texture(device, queue, wgpu::TextureFormat::Rgba8UnormSrgb, wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST),
             tiles_per_row: expand_x,
             tiles_per_column: expand_y
         })
@@ -179,24 +114,7 @@ impl Game for JumpAndRun {
             _ => panic!("layer type not supported")
         };
 
-        let placement_texture = display.device.create_texture_with_data(&display.queue, &wgpu::TextureDescriptor {
-            // All textures are stored as 3D, we represent our 2D texture
-            // by setting depth to 1.
-            size: Extent3d {
-                width: pt_data.width,
-                height: pt_data.height,
-                depth: 1,
-            },
-            mip_level_count: 1, // We'll talk about this a little later
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R16Uint,
-            // SAMPLED tells wgpu that we want to use this texture in shaders
-            // COPY_DST means that we want to copy data to this texture
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
-            label: Some("placement_texture"),
-        }, pt_data.as_bytes());
-
+        let placement_texture = pt_data.to_texture(&display.device, &display.queue, wgpu::TextureFormat::R16Uint, wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST);
         let placement_texture_view = placement_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let diffuse_sampler = display.device.create_sampler(&wgpu::SamplerDescriptor {

@@ -10,7 +10,8 @@ use wgpu::{BlendFactor, BlendOperation, Extent3d};
 use ogmo3::{Level, Layer, Project};
 use crate::camera::Camera;
 use crate::buffer::{UniformBuffer, UpdateUniformBuffer, BindUniformBuffer};
-use image::EncodableLayout;
+use image::{EncodableLayout, GenericImageView};
+use ogmo3::project::Tileset;
 
 mod framework;
 mod camera;
@@ -32,6 +33,93 @@ struct JumpAndRun {
     camera: Camera,
     camera_buffer: UniformBuffer<Mat4>,
     diffuse_bind_group: wgpu::BindGroup,
+}
+
+struct TextureData<T> where T : bytemuck::Pod{
+    width: u32,
+    height: u32,
+    depth: u32,
+    pixels: Box<[T]>
+}
+
+impl<T> TextureData<T> where T : bytemuck::Pod{
+
+    fn new(width: u32, height: u32, depth: u32) -> Self {
+        Self {
+            width,
+            height,
+            depth,
+            pixels: vec![T::zeroed(); (width * height * depth) as usize].into_boxed_slice()
+        }
+    }
+
+    #[allow(dead_code)]
+    fn get_layer(&self, layer: u32) -> &[T]{
+        std::assert!(layer < self.depth);
+        &self.pixels[(layer * (self.width * self.height)) as usize..((layer + 1) * (self.width * self.height)) as usize]
+    }
+
+    #[allow(dead_code)]
+    fn get_layer_mut(&mut self, layer: u32) -> &mut [T]{
+        std::assert!(layer < self.depth);
+        &mut self.pixels[(layer * (self.width * self.height)) as usize..((layer + 1) * (self.width * self.height)) as usize]
+    }
+
+    #[allow(dead_code)]
+    fn get_pixel(&self, x: u32, y: u32, layer:u32) -> &T {
+        std::assert!(x < self.width && y < self.height && layer < self.depth);
+        let index = (x + y * self.height) as usize;
+        &self.get_layer(layer)[index]
+    }
+
+    #[allow(dead_code)]
+    fn get_pixel_mut(&mut self, x: u32, y: u32, layer:u32) -> &mut T {
+        std::assert!(x < self.width && y < self.height && layer < self.depth);
+        let index = (x + y * self.height) as usize;
+        &mut self.get_layer_mut(layer)[index]
+    }
+
+    #[allow(dead_code)]
+    fn as_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(&self.pixels)
+    }
+
+}
+
+fn load_texture(device: &wgpu::Device, queue: &wgpu::Queue, tileset: &Tileset, base_path: PathBuf) -> Result<wgpu::Texture, Error> {
+    let image = image::open(base_path.join(&tileset.path))?;
+    let tile_w = tileset.tile_width  as u32;
+    let tile_h = tileset.tile_height as u32;
+    let expand_x = image.width()  / tile_w;
+    let expand_y = image.height() / tile_h;
+
+    let mut image_data = TextureData::<[u8; 4]>::new(tile_w, tile_h, expand_x * expand_y);
+
+    for (i, x, y) in (0..expand_y).flat_map(|y| (0..expand_x).map(move |x| (x + expand_x * y, x, y))) {
+        for (px, py) in (0..tile_h).flat_map(|y| (0..tile_w).map(move |x| (x, y))) {
+            *image_data.get_pixel_mut(px, py, i) = image.get_pixel(x * tile_w + px,y * tile_h + py).0;
+        }
+    }
+
+    Ok(device.create_texture_with_data(queue,
+        &wgpu::TextureDescriptor {
+            // All textures are stored as 3D, we represent our 2D texture
+            // by setting depth to 1.
+            size: Extent3d {
+                width: tile_w,
+                height: tile_h,
+                depth: expand_x * expand_y
+            },
+            mip_level_count: 1, // We'll talk about this a little later
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            // SAMPLED tells wgpu that we want to use this texture in shaders
+            // COPY_DST means that we want to copy data to this texture
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
+            label: Some("array_texture"),
+        }, image_data.as_bytes()
+    ))
 }
 
 impl Game for JumpAndRun {
@@ -59,6 +147,8 @@ impl Game for JumpAndRun {
             (glam::vec2(ts.tile_width as f32 / diffuse_image.width() as f32, ts.tile_height as f32 / diffuse_image.height() as f32), diffuse_image)
         }).unwrap();
 
+        let test = load_texture(&display.device, &display.queue, project.tilesets.first().unwrap(), base_path)?.create_view(&Default::default());
+
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
         let (pi, pi_width, pi_height) = match level.layers.first().unwrap() {
@@ -69,6 +159,7 @@ impl Game for JumpAndRun {
                 let mut pi = vec![0u16; (pi_width * pi_height) as usize].into_boxed_slice();
                 for tile in layer.unpack() {
                     if let Some(coords) = tile.grid_coords {
+
                         pi[(tile.grid_position.x + tile.grid_position.y * pi_width) as usize] = (1 + coords.x + x_tile * coords.y) as u16;
 
                         let pos_coord = glam::vec2(tile.grid_position.x as f32, -tile.grid_position.y as f32);
@@ -96,7 +187,6 @@ impl Game for JumpAndRun {
 
         let diffuse_rgba = diffuse_image.as_rgba8().unwrap();
 
-        use image::GenericImageView;
         let dimensions = diffuse_image.dimensions();
 
         let texture_size = wgpu::Extent3d {
@@ -201,6 +291,16 @@ impl Game for JumpAndRun {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        },
+                        count: None,
+                    },
                 ],
                 label: Some("texture_bind_group_layout"),
             }
@@ -221,7 +321,11 @@ impl Game for JumpAndRun {
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
-                    }
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(&test),
+                    },
                 ],
                 label: Some("diffuse_bind_group"),
             }

@@ -86,25 +86,37 @@ impl<T> TextureData<T> where T : bytemuck::Pod{
 
 }
 
-fn load_texture(device: &wgpu::Device, queue: &wgpu::Queue, tileset: &Tileset, base_path: PathBuf) -> Result<wgpu::Texture, Error> {
-    let image = image::open(base_path.join(&tileset.path))?;
-    let tile_w = tileset.tile_width  as u32;
-    let tile_h = tileset.tile_height as u32;
-    let expand_x = image.width()  / tile_w;
-    let expand_y = image.height() / tile_h;
+struct TileSetResult {
+    texture: wgpu::Texture,
+    tiles_per_row: u32,
+    tiles_per_column: u32
+}
 
-    let mut image_data = TextureData::<[u8; 4]>::new(tile_w, tile_h, expand_x * expand_y);
+impl TileSetResult {
 
-    for (i, x, y) in (0..expand_y).flat_map(|y| (0..expand_x).map(move |x| (x + expand_x * y, x, y))) {
-        for (px, py) in (0..tile_h).flat_map(|y| (0..tile_w).map(move |x| (x, y))) {
-            *image_data.get_pixel_mut(px, py, i) = image.get_pixel(x * tile_w + px,y * tile_h + py).0;
+    fn get_tile_id(&self, coords: ogmo3::Vec2<i32>) -> Option<u32> {
+        if !(0i32..self.tiles_per_row as i32).contains(&coords.x) || !(0i32..self.tiles_per_column as i32).contains(&coords.y) {
+            return None;
         }
+        Some((coords.x + self.tiles_per_row as i32 * coords.y) as u32)
     }
 
-    Ok(device.create_texture_with_data(queue,
-        &wgpu::TextureDescriptor {
-            // All textures are stored as 3D, we represent our 2D texture
-            // by setting depth to 1.
+    fn parse(device: &wgpu::Device, queue: &wgpu::Queue, tileset: &Tileset, base_path: PathBuf) -> Result<Self, Error> {
+        let image = image::open(base_path.join(&tileset.path))?;
+        let tile_w = tileset.tile_width  as u32;
+        let tile_h = tileset.tile_height as u32;
+        let expand_x = image.width()  / tile_w;
+        let expand_y = image.height() / tile_h;
+
+        let mut image_data = TextureData::<[u8; 4]>::new(tile_w, tile_h, expand_x * expand_y);
+
+        for (i, x, y) in (0..expand_y).flat_map(|y| (0..expand_x).map(move |x| (x + expand_x * y, x, y))) {
+            for (px, py) in (0..tile_h).flat_map(|y| (0..tile_w).map(move |x| (x, y))) {
+                *image_data.get_pixel_mut(px, py, i) = image.get_pixel(x * tile_w + px,y * tile_h + py).0;
+            }
+        }
+
+        let texture  = device.create_texture_with_data(queue, &wgpu::TextureDescriptor {
             size: Extent3d {
                 width: tile_w,
                 height: tile_h,
@@ -117,9 +129,15 @@ fn load_texture(device: &wgpu::Device, queue: &wgpu::Queue, tileset: &Tileset, b
             // SAMPLED tells wgpu that we want to use this texture in shaders
             // COPY_DST means that we want to copy data to this texture
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
-            label: Some("array_texture"),
-        }, image_data.as_bytes()
-    ))
+            label: Some("tile_set_texture"),
+        }, image_data.as_bytes());
+
+        Ok(Self{
+            texture,
+            tiles_per_row: expand_x,
+            tiles_per_column: expand_y
+        })
+    }
 }
 
 impl Game for JumpAndRun {
@@ -142,41 +160,18 @@ impl Game for JumpAndRun {
         let project = Project::from_file(base_path.join("project.ogmo"))?;
         let level = Level::from_file(base_path.join("levels/level1.json"))?;
 
-        let (tex_scale, diffuse_image) = project.tilesets.first().map(|ts| {
-            let diffuse_image = image::open(base_path.join(&ts.path)).unwrap();
-            (glam::vec2(ts.tile_width as f32 / diffuse_image.width() as f32, ts.tile_height as f32 / diffuse_image.height() as f32), diffuse_image)
-        }).unwrap();
+        let tileset = TileSetResult::parse(&display.device, &display.queue, project.tilesets.first().unwrap(), base_path)?;
+        let tileset_texture_view = tileset.texture.create_view(&Default::default());
 
-        let test = load_texture(&display.device, &display.queue, project.tilesets.first().unwrap(), base_path)?.create_view(&Default::default());
-
-        let mut vertices = Vec::new();
-        let mut indices = Vec::new();
         let (pi, pi_width, pi_height) = match level.layers.first().unwrap() {
             Layer::TileCoords(layer) => {
-                let x_tile = (1.0 / tex_scale.x).round() as i32;
                 let pi_width = layer.grid_cells_x;
                 let pi_height = layer.grid_cells_y;
                 let mut pi = vec![0u16; (pi_width * pi_height) as usize].into_boxed_slice();
                 for tile in layer.unpack() {
                     if let Some(coords) = tile.grid_coords {
 
-                        pi[(tile.grid_position.x + tile.grid_position.y * pi_width) as usize] = (1 + coords.x + x_tile * coords.y) as u16;
-
-                        let pos_coord = glam::vec2(tile.grid_position.x as f32, -tile.grid_position.y as f32);
-                        let uv_coord = glam::vec2(coords.x as f32, coords.y as f32);
-                        let ci = vertices.len() as u16;
-
-                        vertices.push(Vertex { position: glam::vec2(0.0, 0.0) + pos_coord, tex_coords: (glam::vec2(0.0, 1.0) + uv_coord) * tex_scale });
-                        vertices.push(Vertex { position: glam::vec2(1.0, 0.0) + pos_coord, tex_coords: (glam::vec2(1.0, 1.0) + uv_coord) * tex_scale });
-                        vertices.push(Vertex { position: glam::vec2(1.0, 1.0) + pos_coord, tex_coords: (glam::vec2(1.0, 0.0) + uv_coord) * tex_scale });
-                        vertices.push(Vertex { position: glam::vec2(0.0, 1.0) + pos_coord, tex_coords: (glam::vec2(0.0, 0.0) + uv_coord) * tex_scale });
-
-                        indices.push(0 + ci);
-                        indices.push(1 + ci);
-                        indices.push(2 + ci);
-                        indices.push(0 + ci);
-                        indices.push(2 + ci);
-                        indices.push(3 + ci);
+                        pi[(tile.grid_position.x + tile.grid_position.y * pi_width) as usize] = (1 + tileset.get_tile_id(coords).unwrap()) as u16;
 
                     }
                 }
@@ -184,49 +179,6 @@ impl Game for JumpAndRun {
             }
             _ => panic!("layer type not supported")
         };
-
-        let diffuse_rgba = diffuse_image.as_rgba8().unwrap();
-
-        let dimensions = diffuse_image.dimensions();
-
-        let texture_size = wgpu::Extent3d {
-            width: dimensions.0,
-            height: dimensions.1,
-            depth: 1,
-        };
-        let diffuse_texture = display.device.create_texture(
-            &wgpu::TextureDescriptor {
-                // All textures are stored as 3D, we represent our 2D texture
-                // by setting depth to 1.
-                size: texture_size,
-                mip_level_count: 1, // We'll talk about this a little later
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                // SAMPLED tells wgpu that we want to use this texture in shaders
-                // COPY_DST means that we want to copy data to this texture
-                usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
-                label: Some("diffuse_texture"),
-            }
-        );
-
-        display.queue.write_texture(
-            // Tells wgpu where to copy the pixel data
-            wgpu::TextureCopyView {
-                texture: &diffuse_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
-            // The actual pixel data
-            diffuse_rgba,
-            // The layout of the texture
-            wgpu::TextureDataLayout {
-                offset: 0,
-                bytes_per_row: 4 * dimensions.0,
-                rows_per_image: dimensions.1,
-            },
-            texture_size,
-        );
 
         let placement_texture = display.device.create_texture_with_data(&display.queue, &wgpu::TextureDescriptor {
             // All textures are stored as 3D, we represent our 2D texture
@@ -248,7 +200,6 @@ impl Game for JumpAndRun {
 
         let placement_texture_view = placement_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let diffuse_texture_view = diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let diffuse_sampler = display.device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -267,7 +218,7 @@ impl Game for JumpAndRun {
                         visibility: wgpu::ShaderStage::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
                             multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
                             sample_type: wgpu::TextureSampleType::Float { filterable: false },
                         },
                         count: None,
@@ -291,16 +242,6 @@ impl Game for JumpAndRun {
                         },
                         count: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStage::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2Array,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        },
-                        count: None,
-                    },
                 ],
                 label: Some("texture_bind_group_layout"),
             }
@@ -312,7 +253,7 @@ impl Game for JumpAndRun {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&diffuse_texture_view),
+                        resource: wgpu::BindingResource::TextureView(&tileset_texture_view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
@@ -321,10 +262,6 @@ impl Game for JumpAndRun {
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(&test),
                     },
                 ],
                 label: Some("diffuse_bind_group"),
@@ -390,19 +327,13 @@ impl Game for JumpAndRun {
             },
         });
 
-        vertices.clear();
-        vertices.push(Vertex { position: glam::vec2(0.0, 0.0) * glam::vec2(pi_width as f32, pi_height as f32), tex_coords: glam::vec2(0.0, 1.0)});
-        vertices.push(Vertex { position: glam::vec2(1.0, 0.0) * glam::vec2(pi_width as f32, pi_height as f32), tex_coords: glam::vec2(1.0, 1.0)});
-        vertices.push(Vertex { position: glam::vec2(1.0, 1.0) * glam::vec2(pi_width as f32, pi_height as f32), tex_coords: glam::vec2(1.0, 0.0)});
-        vertices.push(Vertex { position: glam::vec2(0.0, 1.0) * glam::vec2(pi_width as f32, pi_height as f32), tex_coords: glam::vec2(0.0, 0.0)});
-
-        indices.clear();
-        indices.push(0);
-        indices.push(1);
-        indices.push(2);
-        indices.push(0);
-        indices.push(2);
-        indices.push(3);
+        let vertices = vec![
+            Vertex { position: glam::vec2(0.0, 0.0) * glam::vec2(pi_width as f32, pi_height as f32), tex_coords: glam::vec2(0.0, 1.0)},
+            Vertex { position: glam::vec2(1.0, 0.0) * glam::vec2(pi_width as f32, pi_height as f32), tex_coords: glam::vec2(1.0, 1.0)},
+            Vertex { position: glam::vec2(1.0, 1.0) * glam::vec2(pi_width as f32, pi_height as f32), tex_coords: glam::vec2(1.0, 0.0)},
+            Vertex { position: glam::vec2(0.0, 1.0) * glam::vec2(pi_width as f32, pi_height as f32), tex_coords: glam::vec2(0.0, 0.0)},
+        ];
+        let indices : Vec<u16> = vec![0, 1, 2, 0, 2, 3];
 
         let vertex_buffer = display.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),

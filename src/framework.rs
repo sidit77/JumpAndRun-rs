@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use anyhow::*;
 use imgui_wgpu::{Renderer, RendererConfig};
 use imgui::FontSource;
-use wgpu::RenderPass;
+use wgpu::{RenderPass, BackendBit};
 use winit::dpi::{Size, PhysicalSize};
 
 pub struct Display {
@@ -21,18 +21,31 @@ impl Display {
     async fn new(window: Window) -> Result<Self, Error> {
 
         let size = window.inner_size();
+        let instance = wgpu::Instance::new(match std::env::var("BACKEND"){
+            Ok(name) => {
+                match &name[..] {
+                    "Dx12" => BackendBit::DX12,
+                    "Metal" => BackendBit::METAL,
+                    "Vulkan" => BackendBit::VULKAN,
+                    "WebGPU" => BackendBit::BROWSER_WEBGPU,
+                    "Dx11" => BackendBit::DX11,
+                    "OpenGL" => BackendBit::GL,
+                    _ => BackendBit::PRIMARY
+                }
+            }
+            Err(_) => BackendBit::PRIMARY
+        });
 
-        // The instance is a handle to our GPU
-        // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
-        let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
         let surface = unsafe { instance.create_surface(&window) };
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
+                power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
             })
             .await
             .unwrap();
+
+        std::env::set_var("BACKEND", format!("{:?}", adapter.get_info().backend));
 
         let (device, queue) = adapter
             .request_device(

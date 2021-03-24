@@ -45,7 +45,7 @@ fn get_tile_id(coords: ogmo3::Vec2<i32>, tiles_per_row: i32) -> Option<u32> {
 impl Game for JumpAndRun {
 
     fn init(display: &Display) -> Result<Self, Error> {
-        display.window.set_title("Jump and Run");
+        display.window.set_title(&*format!("Jump and Run - Version {} ({})", env!("CARGO_PKG_VERSION"), std::env::var("BACKEND")?));
 
         let vs_module = display.device.create_shader_module(&include_spirv_out!("shader.vert.spv"));
         let fs_module = display.device.create_shader_module(&include_spirv_out!("shader.frag.spv"));
@@ -77,7 +77,6 @@ impl Game for JumpAndRun {
                         *pt_data.get_pixel_mut(
                             tile.grid_position.x as u32,
                             tile.grid_position.y as u32, 0)  = (1 + get_tile_id(coords, tiles_per_row as i32).unwrap()) as u16
-
                     }
                 }
                 pt_data

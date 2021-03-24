@@ -1,5 +1,7 @@
 #version 450
 
+#extension GL_EXT_samplerless_texture_functions : require
+
 layout(location=0) in vec2 v_tex_coords;
 layout(location=0) out vec4 f_color;
 
@@ -8,8 +10,8 @@ layout(set = 0, binding = 1) uniform utexture2D t_placement;
 layout(set = 0, binding = 2) uniform sampler s_diffuse;
 
 void main() {
-    ivec2 tex_size = textureSize(usampler2D(t_placement, s_diffuse), 0);
-    uint id = texelFetch(usampler2D(t_placement, s_diffuse), ivec2(tex_size * v_tex_coords), 0).r;
+    ivec2 tex_size = textureSize(t_placement, 0);
+    uint id = texelFetch(t_placement, ivec2(tex_size * v_tex_coords), 0).r;
     if(id == 0)
         discard;
 

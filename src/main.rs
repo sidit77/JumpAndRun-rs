@@ -53,7 +53,7 @@ impl Game for JumpAndRun {
         let camera = Camera {
             scale: 13.0,
             aspect: display.sc_desc.width as f32 / display.sc_desc.height as f32,
-            position: glam::vec2(16.0, -12.0)
+            position: glam::vec2(16.0, 11.0)
         };
 
         let camera_buffer = UniformBuffer::<Mat4>::new(&display.device);

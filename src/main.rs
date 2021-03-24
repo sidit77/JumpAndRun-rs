@@ -10,7 +10,7 @@ use wgpu::{BlendFactor, BlendOperation};
 use ogmo3::{Level, Layer, Project};
 use crate::camera::Camera;
 use crate::buffer::{UniformBuffer, UpdateUniformBuffer, BindUniformBuffer};
-use crate::texture::TextureData;
+use crate::texture::{TextureData, MipMaps};
 
 mod framework;
 mod camera;
@@ -71,12 +71,12 @@ impl Game for JumpAndRun {
 
         let pt_data = match level.layers.first().unwrap() {
             Layer::TileCoords(layer) => {
-                let mut pt_data = TextureData::<u16>::new(layer.grid_cells_x as u32, layer.grid_cells_y as u32, 1);
+                let mut pt_data = TextureData::<u16>::new(layer.grid_cells_x as u32, layer.grid_cells_y as u32, 1, MipMaps::None);
                 for tile in layer.unpack() {
                     if let Some(coords) = tile.grid_coords {
                         *pt_data.get_pixel_mut(
                             tile.grid_position.x as u32,
-                            tile.grid_position.y as u32, 0)  = (1 + get_tile_id(coords, tiles_per_row as i32).unwrap()) as u16
+                            tile.grid_position.y as u32, 0, 0)  = (1 + get_tile_id(coords, tiles_per_row as i32).unwrap()) as u16
                     }
                 }
                 pt_data
